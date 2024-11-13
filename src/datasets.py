@@ -2,7 +2,7 @@ import torch
 import torch.utils.data as torch_data
 
 
-class DummyDataset(torch_data.Dataset):
+class MRIDataset(torch_data.Dataset):
     def __len__(self):
         return 1000
 
