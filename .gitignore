@@ -1,2 +1,6 @@
 notebooks/LS_Lab.ipynb
 data/
+wandb/
+checkpoints/
+**/__pycache__/
+df.csv
