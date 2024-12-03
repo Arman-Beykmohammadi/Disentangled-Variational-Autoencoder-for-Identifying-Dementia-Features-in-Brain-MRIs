@@ -1,41 +1,63 @@
+import os
 import torch
-import torch.utils.data as torch_data
 import nibabel as nib
 import pandas as pd
 from pathlib import Path
+from torch.utils.data import Dataset
+from torchvision import transforms
 
 
-class MRIDataset(torch_data.Dataset):
-    def __init__(self, path_to_csv):
+class MRIDataset(Dataset):
+    def __init__(self, csv_path, axis="coronal", max_visits=None, transform=None):
         super().__init__()
 
         # Loading metadata
-        self.metadata = pd.read_csv(
-            path_to_csv)[['path', 'Subject', 'Group', 'Sex', 'Age']]
+        self.metadata = pd.read_csv(csv_path)
+        self.axis = axis
+        self.transform = transform
 
-        # Selecting subjects with CN and AD
-        self.metadata = self.metadata[self.metadata['Group'].isin([
-                                                                  'CN', 'AD'])].iloc[: 100]
-        # Maping the values in Group and Sex to 0 and 1
+        self.metadata = self.metadata[self.metadata['Group'].isin(['CN', 'AD'])]
         self.metadata['Group'] = self.metadata['Group'].map({'CN': 0, 'AD': 1})
         self.metadata['Sex'] = self.metadata['Sex'].map({'M': 0, 'F': 1})
 
-        self.path = self.metadata['path'].to_numpy()
-        self.Subjects = self.metadata['Subject'].to_numpy()
-        self.metadata = self.metadata.to_numpy()[:, 2:].astype(int)
+        self.paths = self.metadata['path'].to_numpy()
+        self.labels = self.metadata[['Group', 'Sex', 'Age']].to_numpy(dtype=int)
+        self.max_visits = max_visits or len(self.paths)
 
-        self.n_samples = self.path.shape[0]
 
     def __len__(self):
-        return self.n_samples
+        return len(self.paths)
 
     def __getitem__(self, idx):
-        path_subject = self.path[idx]
-        assert Path(path_subject).exists(), f"File not found: {path_subject}"
-        scan = nib.load(path_subject).get_fdata()
-        scan = scan[:, scan.shape[1] // 2]
-        scan = (scan - scan.min()) / scan.max() * 2 - 1
-        scan_tensor = torch.tensor(scan, dtype=torch.float64)
-        labels_tensor = torch.tensor(self.metadata[idx], dtype=torch.int)
+        path = self.paths[idx]  # Corrected attribute name
+        assert Path(path).exists(), f"File not found: {path}"
+        scan = nib.load(path).get_fdata()
 
-        return scan_tensor.unsqueeze(0), labels_tensor
+        # Extract a 2D slice
+        if self.axis == "coronal":
+            slice_idx = scan.shape[1] // 2
+            img_slice = scan[:, slice_idx, :]
+        elif self.axis == "sagittal":
+            slice_idx = scan.shape[0] // 2
+            img_slice = scan[slice_idx, :, :]
+        elif self.axis == "axial":
+            slice_idx = scan.shape[2] // 2
+            img_slice = scan[:, :, slice_idx]
+        else:
+            raise ValueError(f"Invalid axis: {self.axis}")
+        
+        # Normalize and transform
+        img_slice = (img_slice - img_slice.min()) / (img_slice.max() - img_slice.min() + 1e-5)
+        img_tensor = torch.tensor(img_slice, dtype=torch.float32).unsqueeze(0)
+
+        if self.transform:
+            img_tensor = self.transform(img_tensor)
+
+        label = torch.tensor(self.labels[idx], dtype=torch.int)
+        return img_tensor, label
+    
+csv_path = "../data/dementia_df.csv"
+dataset = MRIDataset(csv_path=csv_path, axis="coronal")
+for i in range(5):
+    img, label = dataset[i]
+    print(f"Sample {i}: Image shape = {img.shape}, Label = {label}")

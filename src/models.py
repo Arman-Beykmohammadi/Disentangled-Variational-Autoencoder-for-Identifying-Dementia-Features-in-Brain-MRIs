@@ -1,6 +1,6 @@
 import torch
-import pytorch_lightning as pl
 import torch.nn as nn
+import pytorch_lightning as pl
 from utils import resnet18_encoder, resnet18_decoder, PriorEncoder
 
 
@@ -15,6 +15,7 @@ class IVAE(pl.LightningModule):
             first_conv=False,
             maxpool1=False,
             input_height=64,
+            prior_hidden_dim=128,
 
     ):
         super().__init__()
@@ -36,69 +37,79 @@ class IVAE(pl.LightningModule):
 
         # Prior Encoder using fc layers
         self.prior_encoder = PriorEncoder(
-            dim_labels=self.hparams.dim_labels,
-            latent_dim=self.hparams.dim_latent_space,
-            hidden_dim=128,
+            dim_labels=dim_labels,
+            latent_dim=dim_latent_space,
+            hidden_dim=prior_hidden_dim,
         )
 
     def configure_optimizers(self):
         optim = torch.optim.Adam(
+            self.parameters(),
             lr=self.hparams.lr,
-            params=self.parameters(),
         )
-        return optim
 
-    def training_step(self, batch, batch_idx=None):
-        return self._step(batch=batch, batch_idx=batch_idx, step_name='train')
+    def reparameterize(self, mu, logvar):
+        """Reparameterization trick to sample from N(mu, var) using N(0,1)."""
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+    
 
-    def validation_step(self, batch, batch_idx=None):
-        return self._step(batch=batch, batch_idx=batch_idx, step_name='val')
+    def compute_kl(self, mu, logvar, mu_prior, logvar_prior):
+        """KL divergence between two diagonal Gaussians."""
+        kl_divergence = -0.5 * torch.sum(
+            1 + logvar - logvar_prior - ((mu - mu_prior).pow(2) + logvar.exp()) / logvar_prior.exp(),
+            dim=-1
+        )
+        return kl_divergence.mean()
 
-    def compute_kl(
-            self,
-            mu,
-            logvar,
-            mu_prior,
-            logvar_prior,
-    ):
-        # formula for KL divergence between two diagonal gaussians
-        return (-.5 + 0.5*(logvar_prior - logvar) + ((mu - mu_prior).pow(2) + logvar.exp()) / (2 * logvar_prior.exp())).mean()
+    def compute_loss(self, x, x_hat, mu, logvar, mu_prior, logvar_prior):
+        """Compute the combined reconstruction and KL divergence loss."""
+        loss_rec = nn.MSELoss()(x, x_hat)
+        loss_kl = self.compute_kl(mu, logvar, mu_prior, logvar_prior)
+        total_loss = loss_rec + self.hparams.coeff_kl * loss_kl
+        return total_loss, loss_rec, loss_kl
 
-    def _step(self, batch, step_name, batch_idx=None):
-        x, u = batch
-        print(f"x.shape: {x.shape}, u.shape: {u.shape}")
-        print(f"type(x): {type(x)}, type(u): {type(u)}")
-
-        # mu_logvar = self.encoder(x)
-        # mu = mu_logvar[:, self.hparams.dim_latent_space:]
-        # logvar = mu_logvar[:, :self.hparams.dim_latent_space]
+    def forward(self, x, u):
+        """Forward pass."""
+        # Encoder
         features = self.encoder(x)
         mu = self.fc_mu(features)
         logvar = self.fc_logvar(features)
 
-        # reparameterization trick
-        z = mu + torch.exp(logvar / 2) * torch.randn_like(mu)
+        # Reparameterization
+        z = self.reparameterize(mu, logvar)
+
+        # Decoder
         x_hat = self.decoder(z)
-        loss_rec = ((x - x_hat) ** 2).mean()
 
-        mu_logvar_prior = self.prior_encoder(u)
-        mu_prior = mu_logvar_prior[:, self.hparams.dim_latent_space:]
-        logvar_prior = mu_logvar_prior[:, :self.hparams.dim_latent_space]
+        # Prior Encoder
+        mu_prior, logvar_prior = self.prior_encoder(u)
 
-        loss_kl = self.compute_kl(
-            mu=mu,
-            logvar=logvar,
-            mu_prior=mu_prior,
-            logvar_prior=logvar_prior,
-        )
+        return x_hat, mu, logvar, mu_prior, logvar_prior
 
-        loss = loss_rec + self.hparams.coeff_kl * loss_kl
+    def _step(self, batch, step_name):
+        """Common step logic for training/validation."""
+        x, u = batch
+
+        # Forward pass
+        x_hat, mu, logvar, mu_prior, logvar_prior = self.forward(x, u)
+
+        # Compute loss
+        total_loss, loss_rec, loss_kl = self.compute_loss(x, x_hat, mu, logvar, mu_prior, logvar_prior)
+
+        # Logging
         logs = {
-            'loss': loss,
-            'loss_rec': loss_rec,
-            'loss_kl': loss_kl,
+            f"{step_name}_loss": total_loss,
+            f"{step_name}_loss_rec": loss_rec,
+            f"{step_name}_loss_kl": loss_kl,
         }
-        for metric_name, metric_val in logs.items():
-            self.log(f"{step_name}/{metric_name}", metric_val, prog_bar=True)
+        self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True)
 
-        return loss
+        return total_loss
+
+    def training_step(self, batch, batch_idx):
+        return self._step(batch, step_name="train")
+
+    def validation_step(self, batch, batch_idx):
+        return self._step(batch, step_name="val")

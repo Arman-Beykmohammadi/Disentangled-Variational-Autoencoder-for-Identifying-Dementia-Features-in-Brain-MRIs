@@ -1,0 +1,15 @@
+CONFIG = {
+    "batch_size": 128,
+    "latent_dim": 8,
+    "dim_labels": 3,
+    "hidden_dim": 128,
+    "num_epochs": 200,
+    "learning_rate": 1e-3,
+    "coeff_kl": 1,
+    "input_height": 64,
+    "data_csv": "data/dementia_df.csv",
+    "log_dir": "./logs/",
+    "checkpoint_dir": "./checkpoints/",
+    "first_conv": False,
+    "maxpool1": False,
+}
