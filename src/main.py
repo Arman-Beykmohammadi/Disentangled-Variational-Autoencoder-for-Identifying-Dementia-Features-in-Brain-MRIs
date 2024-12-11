@@ -1,3 +1,4 @@
+import optuna
 import os
 from datetime import datetime
 import numpy as np
@@ -26,9 +27,14 @@ def cli_main():
     for i, (train_idx, val_idx) in enumerate(sgkf.split(np.zeros(dataset.n_samples), dataset.metadata[:, 0], dataset.Subjects)):
         print('--------------------')
         print(f'Starting fold {i+1}...')
+        print(
+            f"  Train: index={train_idx.shape}, group={np.unique(dataset.Subjects[train_idx]).shape}, status={np.unique(dataset.metadata[train_idx,0], return_counts=True)}")
+
+        print(
+            f"  Validation: index={val_idx.shape}, group={np.unique(dataset.Subjects[val_idx]).shape}, status={np.unique(dataset.metadata[val_idx,0], return_counts=True)}")
 
         # Initialize train loaders
-        train_loader = DataLoader(dataset, batch_size=128, sampler=SubsetRandomSampler(
+        train_loader = DataLoader(dataset, batch_size=32, sampler=SubsetRandomSampler(
             train_idx), num_workers=min(os.cpu_count(), 4))
 
         # Initialize val loaders
@@ -37,12 +43,12 @@ def cli_main():
 
         # Initialize the model
         model = IVAE(
-            batch_size=128,
+            batch_size=32,
             lr=1e-3,
             coeff_kl=1,
             dim_latent_space=8,
             dim_labels=3,
-            input_height=182
+            input_height=176
         )
 
         # Create directory if it doesn't exist

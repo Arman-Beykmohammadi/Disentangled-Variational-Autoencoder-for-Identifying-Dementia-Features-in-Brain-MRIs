@@ -14,7 +14,7 @@ class IVAE(pl.LightningModule):
             dim_labels=3,
             first_conv=False,
             maxpool1=False,
-            input_height=64,
+            input_height=128,
 
     ):
         super().__init__()
@@ -61,20 +61,28 @@ class IVAE(pl.LightningModule):
             mu_prior,
             logvar_prior,
     ):
+        # print("mu.shape:", mu.shape)
+        # print("mu_prior.shape:", mu_prior.shape)
+        # print("logvar.shape:", logvar.shape)
+        # print("logvar_prior.shape:", logvar_prior.shape)
         # formula for KL divergence between two diagonal gaussians
         return (-.5 + 0.5*(logvar_prior - logvar) + ((mu - mu_prior).pow(2) + logvar.exp()) / (2 * logvar_prior.exp())).mean()
 
     def _step(self, batch, step_name, batch_idx=None):
         x, u = batch
-        print(f"x.shape: {x.shape}, u.shape: {u.shape}")
-        print(f"type(x): {type(x)}, type(u): {type(u)}")
+        # print(f"x.shape: {x.shape}, u.shape: {u.shape}")
 
         # mu_logvar = self.encoder(x)
         # mu = mu_logvar[:, self.hparams.dim_latent_space:]
         # logvar = mu_logvar[:, :self.hparams.dim_latent_space]
         features = self.encoder(x)
+        # print(f"features.shape: {features.shape}")
+
         mu = self.fc_mu(features)
+        # print(f"mu.shape: {mu.shape}")
+
         logvar = self.fc_logvar(features)
+        # print(f"logvar.shape: {logvar.shape}")
 
         # reparameterization trick
         z = mu + torch.exp(logvar / 2) * torch.randn_like(mu)
@@ -82,8 +90,11 @@ class IVAE(pl.LightningModule):
         loss_rec = ((x - x_hat) ** 2).mean()
 
         mu_logvar_prior = self.prior_encoder(u)
-        mu_prior = mu_logvar_prior[:, self.hparams.dim_latent_space:]
-        logvar_prior = mu_logvar_prior[:, :self.hparams.dim_latent_space]
+        # print(f"mu_logvar_prior.shape: {len(mu_logvar_prior)}")
+        mu_prior = mu_logvar_prior[0]
+        # print(f"mu_prior.shape: {mu_prior.shape}")
+        logvar_prior = mu_logvar_prior[1]
+        # print(f"logvar_prior.shape: {logvar_prior.shape}")
 
         loss_kl = self.compute_kl(
             mu=mu,
