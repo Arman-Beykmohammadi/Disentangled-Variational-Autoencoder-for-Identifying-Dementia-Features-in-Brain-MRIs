@@ -237,7 +237,10 @@ class ResNetEncoder(nn.Module):
         x = self.layer4(x)
 
         x = self.avgpool(x)
-        return torch.flatten(x, 1)
+        # print(f"ResNetEncoder.Forward.x.shape: {x.shape}")
+        a = torch.flatten(x, 1)
+        # print(f"ResNetEncoder.Forward.a.shape: {a.shape}")
+        return a
 
 
 class ResNetDecoder(nn.Module):
@@ -344,16 +347,42 @@ class ResNetEncoderWithFC(nn.Module):
 
 
 class PriorEncoder(nn.Module):
-    def __init__(self, dim_labels, latent_dim, hidden_dim=128):
+    def __init__(self, dim_labels, latent_dim, hidden_layers,
+                 activation=nn.ReLU, normalization=None, dropout=0.0):
+        """
+        Args:
+            dim_labels (int): Number of label features.
+            latent_dim (int): Number of features in latent space.
+            hidden_layers (list of int): Number of units in each hidden layer.
+            activation (torch.nn.Module): Activation function (default: nn.ReLU).
+            normalization (str): Type of normalization ('batch' or 'layer').
+            dropout (float): Dropout rate (default: 0.0).
+        """
         super().__init__()
-        self.fc1 = nn.Linear(dim_labels, hidden_dim)
-        self.relu = nn.ReLU()
-        self.fc_mu = nn.Linear(hidden_dim, latent_dim)
-        self.fc_logvar = nn.Linear(hidden_dim, latent_dim)
+        layers = []
+
+        # Input layer
+        in_features = dim_labels
+
+        for hidden_units in hidden_layers:
+            layers.append(nn.Linear(in_features, hidden_units))
+
+            if normalization == 'batch':
+                layers.append(nn.BatchNorm1d(hidden_units))
+            elif normalization == 'layer':
+                layers.append(nn.LayerNorm(hidden_units))
+
+            layers.append(activation())
+
+            if dropout > 0:
+                layers.append(nn.Dropout(dropout))
+
+            in_features = hidden_units
+
+        # Output layer
+        layers.append(nn.Linear(in_features, latent_dim))
+
+        self.model = nn.Sequential(*layers)
 
     def forward(self, u):
-        h = self.fc1(u)
-        h = self.relu(h)
-        mu_prior = self.fc_mu(h)
-        logvar_prior = self.fc_logvar(h)
-        return mu_prior, logvar_prior
+        return self.model(u)
