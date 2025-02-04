@@ -8,15 +8,15 @@ import wandb
 class IVAE(pl.LightningModule):
     def __init__(
             self,
-            batch_size=128,
+            batch_size=64,
             lr=1e-3,
             coeff_kl=1,
             dim_latent_space=8,
+            input_height=176,
             dim_labels=3,
             first_conv=False,
             maxpool1=False,
-            input_height=128,
-
+            fold_idx=None
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -30,7 +30,7 @@ class IVAE(pl.LightningModule):
         # Decoder using ResNet18
         self.decoder = resnet18_decoder(
             latent_dim=self.hparams.dim_latent_space,
-            input_height=input_height,
+            input_height=self.hparams.input_height,
             first_conv=first_conv,
             maxpool1=maxpool1,
         )
@@ -43,20 +43,13 @@ class IVAE(pl.LightningModule):
         )
 
     def configure_optimizers(self):
-        optim = torch.optim.Adam(
-            lr=self.hparams.lr,
-            params=self.parameters(),
-        )
-        return optim
+        return torch.optim.Adam(params=self.parameters(), lr=self.hparams.lr)
 
     def training_step(self, batch, batch_idx=None):
         return self._step(batch=batch, batch_idx=batch_idx, step_name='train')
 
     def validation_step(self, batch, batch_idx=None):
         return self._step(batch=batch, batch_idx=batch_idx, step_name='val')
-
-    # def on_validation_epoch_end(self):
-    #     print()
 
     def compute_kl(
             self,
@@ -91,35 +84,12 @@ class IVAE(pl.LightningModule):
             'loss_rec': loss_rec,
             'loss_kl': loss_kl,
         }
+        batch_size = x.size(0)
         for metric_name, metric_val in logs.items():
-            self.log(f"{step_name}/{metric_name}",
-                     metric_val, prog_bar=True, on_epoch=True)
+            self.log(f"{step_name}/Fold {self.hparams.fold_idx}-{metric_name}",
+                     metric_val, prog_bar=True, on_epoch=True, on_step=False, batch_size=batch_size)
 
         return loss
-        # if step_name == 'val':
-        #     # Select a few examples for logging
-        #     num_samples = 5  # Adjust as needed
-        #     inputs = x[:num_samples]
-        #     outputs = x_hat[:num_samples]
-
-        #     # Normalize images for logging (ensure they are in [0, 1] range)
-        #     inputs = (inputs - inputs.min()) / (inputs.max() - inputs.min())
-        #     outputs = (outputs - outputs.min()) / \
-        #         (outputs.max() - outputs.min())
-
-        #     # Log images to WandB
-        #     images = []
-        #     # for i in range(num_samples):
-        #     for i in range(5):  # Log 5 images
-        #         img_pair = wandb.Image(
-        #             inputs[i].cpu().numpy().reshape((176, 176, 1)), caption="Input")  # Input
-        #         img_recon = wandb.Image(
-        #             outputs[i].cpu().numpy().reshape((176, 176, 1)), caption="Reconstructed")  # Use only caption for captioning
-        #         images.append({"Input": img_pair, "Reconstructed": img_recon})
-
-        #     # Log the list of images to WandB
-        #     # It's a list of dictionaries for now, but should be list of images
-        #     self.log_dict(images)
 
     def forward(self, x):
         mu_logvar = self.encoder(x)
@@ -133,9 +103,10 @@ class IVAE(pl.LightningModule):
 
 
 class ImagePredictionLogger(pl.Callback):
-    def __init__(self, val_samples):
+    def __init__(self, val_samples, fold_idx):
         super().__init__()
         self.val_imgs, self.val_labels = val_samples
+        self.fold_idx = fold_idx
 
     def on_validation_epoch_end(self, trainer, pl_module):
         val_imgs = self.val_imgs.to(device=pl_module.device)
@@ -146,9 +117,8 @@ class ImagePredictionLogger(pl.Callback):
         x_hat = (x_hat - x_hat.min()) / (x_hat.max() - x_hat.min())
 
         trainer.logger.experiment.log({
-            "input": [wandb.Image(x.cpu().numpy().reshape((176, 176, 1)), caption=f"Label:{y}")
-                      for x, y in zip(val_imgs, self.val_labels)],
-            "reconstructed": [wandb.Image(x.cpu().numpy().reshape((176, 176, 1)), caption=f"Label:{y}")
-                              for x, y in zip(x_hat, self.val_labels)],
-            "global_step": trainer.global_step,
+            f"Fold {self.fold_idx}-input": [wandb.Image(x.cpu().numpy().reshape((176, 176, 1)), caption=f"Label:{y}")
+                                            for x, y in zip(val_imgs, self.val_labels)],
+            f"Fold {self.fold_idx}-reconstructed": [wandb.Image(x.cpu().numpy().reshape((176, 176, 1)), caption=f"Label:{y}")
+                                                    for x, y in zip(x_hat, self.val_labels)],
         })

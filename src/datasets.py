@@ -11,7 +11,8 @@ class MRIDataset(torch_data.Dataset):
     def __init__(self, path_to_csv):
         super().__init__()
 
-        # Loading metadata
+        # Loading desired columns of metadata, path for image,
+        # subject, group, sex, and age for use in prior encoder
         self.metadata = pd.read_csv(
             path_to_csv)[['path', 'Subject', 'Group', 'Sex', 'Age']]
 
@@ -33,9 +34,12 @@ class MRIDataset(torch_data.Dataset):
         return self.n_samples
 
     def __getitem__(self, idx):
-        path_subject = self.path[idx]
-        assert Path(path_subject).exists(), f"File not found: {path_subject}"
-        scan = nib.load(path_subject).get_fdata()
+        # Loading the scan
+        path_to_scan = self.path[idx]
+        assert Path(path_to_scan).exists(), f"File not found: {path_to_scan}"
+        scan = nib.load(path_to_scan).get_fdata()
+
+        # Selecting the middle slice of the scan
         scan = scan[:, scan.shape[1] // 2]
         scan = (scan - scan.min()) / scan.max() * 2 - 1
         scan_tensor = torch.tensor(scan, dtype=torch.float32).unsqueeze(0)
